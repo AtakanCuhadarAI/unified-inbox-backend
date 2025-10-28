@@ -141,3 +141,70 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+// 4) WhatsApp reply endpoint
+// Buraya POST atacağız: { "to": "9050xxxxxxx", "text": "Merhaba, nasıl yardımcı olabilirim?" }
+app.post("/reply/whatsapp", async (req, res) => {
+  try {
+    const { to, text } = req.body;
+
+    if (!to || !text) {
+      return res.status(400).json({ error: "to ve text zorunlu" });
+    }
+
+    // WhastApp API'ye gidecek veriler
+    const payload = {
+      messaging_product: "whatsapp",
+      to: `+${to.replace(/^\+/, "")}`, // +90... formatını garanti altına al
+      type: "text",
+      text: {
+        preview_url: false,
+        body: text
+      }
+    };
+
+    // Meta bize panelde "Phone number ID" verdi ya, onu kullanıyoruz:
+    const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    const ACCESS_TOKEN = process.env.WHATSAPP_TOKEN;
+
+    if (!PHONE_NUMBER_ID || !ACCESS_TOKEN) {
+      return res
+        .status(500)
+        .json({ error: "Sunucuda PHONE_NUMBER_ID veya WHATSAPP_TOKEN yok" });
+    }
+
+    // WhatsApp Cloud API endpoint:
+    const url = `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages`;
+
+    // Node 18+ içinde fetch global olarak var. (Senin Node versiyonun da yeterince yeni.)
+    const apiResp = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await apiResp.json();
+    console.log("📤 WhatsApp send result:", data);
+
+    // Gönderdiğimiz mesajı da inboxMessages listesine ekleyelim ki panelde anında görünsün
+    inboxMessages.unshift({
+      id: `wa_out_${Date.now()}`,
+      channel: "whatsapp",
+      direction: "outbound",
+      to: payload.to,
+      text: text,
+      receivedAt: new Date().toISOString(),
+      status: "sent(pending-confirm)"
+    });
+
+    return res.json({
+      ok: true,
+      whatsapp_api_response: data
+    });
+  } catch (err) {
+    console.log("❌ reply error:", err);
+    res.status(500).json({ error: "send failed", detail: err.message });
+  }
+});
