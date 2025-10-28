@@ -67,35 +67,73 @@ app.post("/webhook/whatsapp", (req, res) => {
   console.log("📩 Incoming WhatsApp payload:");
   console.dir(req.body, { depth: null });
 
-  // Basit ekleme: gelen mesajı inboxMessages listesine push edebiliriz
   try {
     const entry = req.body?.entry?.[0];
     const change = entry?.changes?.[0];
-    const msg = change?.value?.messages?.[0];
+    const value = change?.value;
 
-    if (msg) {
-      const from = msg.from;           // gönderen numara
-      const text = msg.text?.body;     // mesaj içeriği
-      const ts = msg.timestamp;        // zaman
+    // 1) Kullanıcıdan gelen normal mesaj var mı? (inbound)
+    // value.messages[0] genelde şöyle olur:
+    // {
+    //   from: "90507....",
+    //   timestamp: "1761673000",
+    //   text: { body: "Merhaba" },
+    //   type: "text"
+    // }
+    const incomingMsg = value?.messages?.[0];
+
+    if (incomingMsg) {
+      const from = incomingMsg.from;
+      const textBody =
+        incomingMsg.text?.body ||
+        incomingMsg.interactive?.button_reply?.title ||
+        "[non-text message]";
+      const ts = incomingMsg.timestamp;
 
       inboxMessages.unshift({
         id: `wa_${Date.now()}`,
         channel: "whatsapp",
+        direction: "inbound", // müşteri -> biz
         from,
-        text,
+        text: textBody,
         receivedAt: new Date(Number(ts) * 1000).toISOString(),
         status: "unread"
       });
 
-      console.log("✅ Mesaj inboxMessages içine eklendi.");
-    } else {
-      console.log("ℹ️ Mesaj objesi bulunamadı (muhtemelen status update).");
+      console.log("✅ Inbound mesaj inboxMessages içine eklendi.");
+    }
+
+    // 2) Gönderdiğimiz mesajların durum güncellemesi var mı? (status update)
+    // value.statuses[0] genelde şöyle olur:
+    // {
+    //   status: "sent" | "delivered" | "read",
+    //   timestamp: "...",
+    //   recipient_id: "90507..."
+    // }
+    const statusUpdate = value?.statuses?.[0];
+
+    if (statusUpdate) {
+      const to = statusUpdate.recipient_id;
+      const deliveryStatus = statusUpdate.status;
+      const ts2 = statusUpdate.timestamp;
+
+      inboxMessages.unshift({
+        id: `wa_status_${Date.now()}`,
+        channel: "whatsapp",
+        direction: "outbound-status", // biz -> müşteri durumu
+        to,
+        text: `Message ${deliveryStatus}`,
+        receivedAt: new Date(Number(ts2) * 1000).toISOString(),
+        status: deliveryStatus
+      });
+
+      console.log("✅ Status update inboxMessages içine eklendi.");
     }
   } catch (err) {
     console.log("⚠️ Parse error:", err.message);
   }
 
-  // WhatsApp'a 'aldım' dememiz gerekiyor yoksa tekrar gönderir
+  // WhatsApp "200 OK" bekliyor yoksa tekrar gönderir
   res.sendStatus(200);
 });
 
